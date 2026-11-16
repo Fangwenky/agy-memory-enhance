@@ -190,11 +190,11 @@ matcher 为一组尽力识别的写文件类工具名加上 `run_command`。具�
 2. 发现新的用户输入时，记录 `user_input` 事件。
 3. **压缩检测**：满足任一条件即判定压缩已发生：
    - (a) transcript 中出现压缩/检查点类步骤或标记，具体形态由 M0 确认；
-   - (b) 最新可见的 `input_tokens` 比"自上次压缩以来的峰值"低 ≥ `compactionDropRatio`（默认 40%），且该峰值 ≥ `minPeakTokens`（默认 60k）。**判定压缩后峰值清零**，这样第二次、第三次压缩也能检测到。
+   - (b) 最新可见的**上下文大小**（`input_tokens + cache_read_tokens`；`input_tokens` 只计未命中缓存的部分，单看它会因缓存波动而误报，见 `spike/FINDINGS.md`）比"自上次压缩以来的峰值"低 ≥ `compactionDropRatio`（默认 40%），且该峰值 ≥ `minPeakTokens`（默认 60k）。**判定压缩后峰值清零**，这样第二次、第三次压缩也能检测到。
 
    判定后：记录 `compaction` 事件，并注入对齐信号，内容为"检测到上下文已被压缩。在继续之前，加载 agy-memory skill 并执行对齐流程。"，后附简报和 `mem` 路径。每次压缩只注入一次，由 state 去重。
 4. **水位预警**：同时满足两个条件时注入一行提示：
-   - `input_tokens ≥ softLimitTokens`（默认 120k），且距上次预警又增长了 ≥ `nudgeStepTokens`（默认 30k；从上次预警时的水位起算，首次从软上限起算）；
+   - 上下文大小 `≥ softLimitTokens`（默认 120k），且距上次预警又增长了 ≥ `nudgeStepTokens`（默认 30k；从上次预警时的水位起算，首次从软上限起算）；
    - 上次预警之后账本没有更新过。
 
    提示内容为"上下文接近压缩阈值，请先用 `mem` 把约束、决策、进度写入账本，再继续。"这一步就是"可控压缩"的替代：在压缩发生前主动存档。
