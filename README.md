@@ -1,26 +1,42 @@
 # agy-memory
 
-**Compaction-aware persistent memory for Google Antigravity (`agy`).**  
-**面向 Google Antigravity (`agy`) 的抗压缩持久化记忆增强插件。**
+English | [简体中文](README.zh-CN.md)
 
-Zero external dependencies (Python 3.9+ stdlib only) · No extra API keys · Drop-in Antigravity Plugin (`hooks + rules + skill + CLI`)
+**Compaction-aware persistent memory plugin for Google Antigravity (`agy`).**
+
+Zero external dependencies (Python 3.9+ stdlib only) · No extra API keys · Native Antigravity Plugin (`hooks + rules + skill + CLI`)
 
 ---
 
-## Why `agy-memory`? / 为什么需要它？
+## Quick Install (Paste to Agent)
+
+Copy and paste the prompt below into Antigravity — the agent will install and enable `agy-memory` automatically:
+
+```text
+Install the agy-memory plugin from https://github.com/Fangwenky/agy-memory-enhance: clone it to a temporary directory, validate `./plugin/agy-memory` with `agy plugin validate --strict`, install it globally with `agy plugin install ./plugin/agy-memory`, verify it appears as enabled in `agy plugin list`, and clean up the temporary clone.
+```
+
+> Prefer installing only for the current project? Paste:
+> ```text
+> Install agy-memory into this workspace only: clone https://github.com/Fangwenky/agy-memory-enhance to a temporary directory, run `sh scripts/install-dev.sh <current_workspace_path>`, and remove the temporary clone.
+> ```
+
+---
+
+## Why `agy-memory`?
 
 Antigravity automatically compacts conversation history once context crosses a model-specific backend limit, replacing raw tool outputs and multi-turn history with a prose `<summary>` (`SYSTEM/CHECKPOINT`). While native summaries preserve top-level user prompts well, long-running tasks still suffer from:
 
-1. **Multi-compaction decay (多次压缩叠加失真)** — "summaries of summaries" drop exact identifiers, keys, symbols, and intermediate tool outputs from earlier phases.
-2. **Mid-task drift (中途细节稀释)** — subtle constraints, decisions, and observations buried in dozens of tool calls get flattened or omitted.
-3. **Cross-session amnesia (跨会话失忆)** — starting a new conversation in the same repo loses prior decisions, constraints, and unfinished progress.
-4. **Unverifiable summaries (摘要不可核查)** — native resume rules instruct the agent to treat summary statements as observed truth without re-verifying; once a detail bends, the error sticks.
+1. **Multi-compaction decay** — "summaries of summaries" drop exact identifiers, keys, symbols, and intermediate tool outputs from earlier phases.
+2. **Mid-task drift** — subtle constraints, decisions, and observations buried across dozens of tool calls get flattened or omitted.
+3. **Cross-session amnesia** — starting a new conversation in the same repository loses prior decisions, constraints, and unfinished progress.
+4. **Unverifiable summaries** — native resume rules instruct the agent to treat summary statements as observed truth without re-verifying; once a detail bends, the error sticks.
 
-`agy-memory` pairs **deterministic lifecycle hooks** (capture, compaction detection, water-level nudges) with an **agent-driven skill & CLI (`mem`)** so the agent itself curates an append-only ledger and re-aligns against ground-truth sources right after compaction.
+`agy-memory` pairs **deterministic lifecycle hooks** (capture, compaction detection, adaptive water-level nudges) with an **agent-driven skill & CLI (`mem`)** so the agent curates an append-only ledger as it works and re-aligns against ground-truth sources right after compaction.
 
 ---
 
-## How It Works / 工作原理
+## How It Works
 
 ```mermaid
 flowchart LR
@@ -53,29 +69,31 @@ flowchart LR
 ```
 
 ### Three-Layer Memory Store (`.agy-memory/`)
+
 - **L0 Raw Ground Truth (`archive/<convId>.jsonl.gz`)**: Incremental multi-member gzip archive of transcripts written on `Stop`. Exact facts carry pointers (`<convId>#<step_index>` or `file:<path>`) so the agent can pull verbatim text via `mem show <convId>#<step>` even if live logs are cleaned up.
 - **L1 Event Stream (`events.jsonl`)**: Written deterministically by hooks (`< 50ms`, no LLM calls) — verbatim `user_input`, `file_edit`, `command`, `turn_end` (with `git status`), and `compaction` (preserving agy's native `CHECKPOINT` summary text).
 - **L2 Curated Ledger (`ledger.jsonl`)**: Append-only entries written by the agent via `mem`:
   - **Project-scoped**: `constraint`, `decision`, `fact` (shared across sessions in the workspace).
-  - **Session-scoped**: `progress`, `open` (isolated per `conversationId` so parallel/new tasks never inherit stale next-steps).
+  - **Session-scoped**: `progress`, `open` (isolated per `conversationId` so parallel or new tasks never inherit stale next-steps).
   - Revisions use `mem supersede <id> "..."` to keep full history for long-term traceability.
 
 ### Compaction Prevention & Post-Compaction Alignment
-1. **Adaptive Water-Level Nudges**: `PreInvocation` tracks `input_tokens + cache_read_tokens` (true context size, immune to prompt-cache misses) and learns each model's actual compaction peak in `state/models.json`. Approaching 75% of that peak triggers a 1-line nudge to save unsaved constraints/decisions/facts *before* compaction hits.
+
+1. **Adaptive Water-Level Nudges**: `PreInvocation` tracks `input_tokens + cache_read_tokens` (true context size, immune to prompt-cache misses) and learns each model's actual compaction peak in `state/models.json`. Approaching 75% of that peak triggers a 1-line nudge to save unsaved constraints, decisions, and facts *before* compaction hits.
 2. **Exact Compaction Detection**: Watches new transcript steps for `SYSTEM/CHECKPOINT` (with a 40% token-drop fallback).
 3. **Structured Re-alignment**: Injects the rendered session brief (capped at `1500` tokens by priority: `constraint > session progress > decision > fact`) and instructs the agent to load the `agy-memory` skill to verify constraints and re-ground exact identifiers before its next edit.
 
 ---
 
-## Benchmark Results / 评测结果
+## Benchmark Results
 
-Evaluated across 5 multi-turn tasks (`Gemini 4 Hydrogen Medium`, headless `agy` CLI in isolated git workspaces; details in [`eval/RESULTS.md`](eval/RESULTS.md)):
+Evaluated across 5 multi-turn tasks (`Gemini 4 Hydrogen Medium`, headless `agy` CLI in isolated git workspaces; full report in [`eval/RESULTS.md`](eval/RESULTS.md)):
 
-| Metric / 指标 | Baseline (Native `agy`) | With `agy-memory` | Delta |
+| Metric | Baseline (Native `agy`) | With `agy-memory` | Delta |
 | :-- | :-- | :-- | :-- |
-| **Exact Fact Recall / 精确事实召回** | 33 / 43 (76.7%) | **42 / 43 (97.7%)** | **+21.0 pp** |
-| **Lost Facts / 事实丢失数** | 10 | **1** *(0 memory loss; 1 turn-1 count off-by-one)* | **-90.0%** |
-| **Constraint Recall / 约束复述** | 11 / 12 (91.7%) | **12 / 12 (100%)** | **+8.3 pp** |
+| **Exact Fact Recall** | 33 / 43 (76.7%) | **42 / 43 (97.7%)** | **+21.0 pp** |
+| **Lost Facts** | 10 | **1** *(0 memory loss; 1 turn-1 count off-by-one)* | **-90.0%** |
+| **Constraint Recall** | 11 / 12 (91.7%) | **12 / 12 (100%)** | **+8.3 pp** |
 | **Uncached Input + Output Tokens** | 4.04M | **4.15M** | **+2.7%** |
 
 Highlights:
@@ -85,11 +103,11 @@ Highlights:
 
 ---
 
-## Installation / 安装方式
+## Manual Installation
 
 **Requirements**: macOS or Linux, `python3` (3.9+) on `PATH`, Antigravity (`agy` CLI / Antigravity 2.0 / IDE).
 
-### Option 1: Global Install via `agy plugin` (Recommended / 推荐全局安装)
+### Option 1: Global Install via `agy plugin` (Recommended)
 
 ```sh
 git clone https://github.com/Fangwenky/agy-memory-enhance.git
@@ -100,9 +118,7 @@ agy plugin install ./plugin/agy-memory
 
 Manage anytime with `agy plugin list`, `agy plugin disable agy-memory`, or `agy plugin enable agy-memory`.
 
-### Option 2: Per-Workspace Install (单项目安装 / 团队共享)
-
-Copy the plugin into your project's `.agents/plugins/` directory:
+### Option 2: Per-Workspace Install
 
 ```sh
 sh scripts/install-dev.sh /path/to/your/project
@@ -112,7 +128,7 @@ By default, `.agy-memory/.gitignore` ignores `*` so local session logs and secre
 
 ---
 
-## `mem` CLI Quick Reference / 命令行速查
+## `mem` CLI Quick Reference
 
 Hooks automatically generate a workspace shim at `<workspace>/.agy-memory/bin/mem` and pass its path in `[agy-memory]` system messages:
 
@@ -141,7 +157,7 @@ Hooks automatically generate a workspace shim at `<workspace>/.agy-memory/bin/me
 
 ---
 
-## Configuration / 配置说明
+## Configuration
 
 Optional `<workspace>/.agy-memory/config.json` (all fields have sensible defaults):
 
@@ -168,7 +184,7 @@ Optional `<workspace>/.agy-memory/config.json` (all fields have sensible default
 
 ---
 
-## Known Limitations / 已知局限
+## Known Limitations
 
 - **One-call alignment lag**: Antigravity executes auto-compaction *after* `PreInvocation` and right *before* calling the model. Consequently, the first model call immediately following compaction runs on the native summary alone, and `[agy-memory]` injects the alignment brief right before the *next* model call (instructing the agent to audit that post-compaction step as well).
 - **Internal transcript schema**: Compaction detection reads `transcript_full.jsonl` (`SYSTEM/CHECKPOINT` + token counters). If a future Antigravity version changes transcript internals, `PreInvocation` falls back to token-drop detection and `mem doctor` surfaces diagnostics.
@@ -176,7 +192,7 @@ Optional `<workspace>/.agy-memory/config.json` (all fields have sensible default
 
 ---
 
-## Development & Testing / 开发与测试
+## Development & Testing
 
 ```sh
 # Unit, concurrency, subprocess hook, CLI & 50MB performance tests (46 tests)
