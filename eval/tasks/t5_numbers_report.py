@@ -3,7 +3,7 @@ import os
 import random
 import re
 
-from common import (compactions, git_init, load_transcript, make_modules, mentions, read_paths,
+from common import (compactions, git_init, load_transcript, make_modules, mentions, commands, read_paths,
                     user_steps)
 
 NAME = "t5_numbers_report"
@@ -64,14 +64,14 @@ def grade(ws, truth, run):
                            "result": "correct" if ok else ("unit_wrong" if ok_ms else
                                                            ("hallucinated" if wrong else "missing"))})
         unit_ok += bool(re.search(rf"\b{re.escape(secs)}\b", row))
-    violations = [f"re-read thresholds in final turn: {p}" for p in read_paths(steps, last_start)
-                  if "/thresholds/" in p]
+    re_reads = [p for p in read_paths(steps, last_start) if "/thresholds/" in p] + [c[:80] for c in commands(steps, last_start) if "thresholds" in c]
+    violations = [f"re-read thresholds in final turn: {p}" for p in re_reads]
     violations += [f"timeout not in seconds for {d['item']}" for d in detail if d["result"] == "unit_wrong"]
     if not report:
         violations.append("report.md missing")
     return {
         "quiz_correct": correct, "quiz_total": 3 * len(truth), "hallucinated": halluc,
         "constraints_recalled": None, "constraints_total": None,
-        "violations": violations, "quiz_void": False,
+        "violations": violations, "quiz_void": bool(re_reads),
         "completion": 1.0 if report else 0.0, "compactions": compactions(steps), "detail": detail,
     }

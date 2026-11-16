@@ -1,5 +1,6 @@
 {
   "name": "agy-memory",
-  "description": "Persistent, compaction-aware memory for Antigravity: records context while you work, detects context compaction and re-aligns the agent from an independent memory ledger.",
-  "repository": "https://github.com/REPLACE_ME/agy-memory"
+  "version": "0.1.0",
+  "description": "Compaction-aware persistent memory for Antigravity: captures context continuously, detects context compaction, and re-aligns the agent from an append-only ledger and transcript archive.",
+  "logo": "assets/logo.svg"
 }

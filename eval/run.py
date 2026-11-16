@@ -9,12 +9,14 @@ Usage:
 Each run gets a fresh workspace <out>/<task>-<arm>/ws. Results: <out>/<task>-<arm>/run.json, grade.json.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import importlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -24,13 +26,15 @@ sys.path.insert(0, os.path.join(HERE, "tasks"))
 
 ALL_TASKS = ["t1_midway_constraints", "t2_decision_edits", "t3_cross_session",
              "t4_two_compactions", "t5_numbers_report"]
+_LOG_LOCK = threading.Lock()
 
 
 def log(out, msg):
     line = f"{time.strftime('%H:%M:%S')} {msg}"
-    print(line, flush=True)
-    with open(os.path.join(out, "progress.log"), "a") as f:
-        f.write(line + "\n")
+    with _LOG_LOCK:
+        print(line, flush=True)
+        with open(os.path.join(out, "progress.log"), "a") as f:
+            f.write(line + "\n")
 
 
 def run_session(ws, turns, model, logpath, timeout_s):
@@ -113,6 +117,35 @@ def do_grade(task, d):
     return g
 
 
+def _one(task, arm, out, a):
+    name = task.NAME
+    d = os.path.join(out, f"{name}-{arm}")
+    if a.dry_run:
+        os.makedirs(os.path.join(d, "ws"), exist_ok=True)
+        task.setup(os.path.join(d, "ws"))
+        log(out, f"built {d}")
+        return
+    if a.skip_done and os.path.exists(os.path.join(d, "grade.json")):
+        g = json.load(open(os.path.join(d, "grade.json")))
+        if g.get("complete_run"):
+            log(out, f"skip (already done) {name}/{arm}")
+            return
+    if not a.grade_only:
+        log(out, f"run {name}/{arm}")
+        try:
+            do_run(task, arm, out, a.model, a.timeout)
+        except Exception as e:  # noqa: BLE001
+            log(out, f"  FAILED {name}/{arm}: {e!r}")
+            return
+    try:
+        g = do_grade(task, d)
+        log(out, f"  graded {name}/{arm}: quiz {g['quiz_correct']}/{g['quiz_total']} "
+                 f"halluc {g['hallucinated']} violations {len(g['violations'])} "
+                 f"compactions {g['compactions']}")
+    except Exception as e:  # noqa: BLE001
+        log(out, f"  GRADE FAILED {name}/{arm}: {e!r}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -120,35 +153,24 @@ def main():
     ap.add_argument("--arms", default="plugin,baseline")
     ap.add_argument("--model", default="gemini-4-hydrogen-medium")
     ap.add_argument("--timeout", type=int, default=5400, help="per session, seconds")
+    ap.add_argument("--jobs", type=int, default=1, help="parallel runs")
+    ap.add_argument("--skip-done", action="store_true")
     ap.add_argument("--grade-only", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="only build workspaces")
     a = ap.parse_args()
     out = os.path.expanduser(a.out)
     os.makedirs(out, exist_ok=True)
-    names = [n for n in ALL_TASKS if any(n.startswith(t) for t in a.tasks.split(","))]
-    for name in names:
-        task = importlib.import_module(name)
-        for arm in a.arms.split(","):
-            d = os.path.join(out, f"{name}-{arm}")
-            if a.dry_run:
-                os.makedirs(os.path.join(d, "ws"), exist_ok=True)
-                task.setup(os.path.join(d, "ws"))
-                log(out, f"built {d}")
-                continue
-            if not a.grade_only:
-                log(out, f"run {name}/{arm}")
-                try:
-                    do_run(task, arm, out, a.model, a.timeout)
-                except Exception as e:  # noqa: BLE001
-                    log(out, f"  FAILED {name}/{arm}: {e!r}")
-                    continue
-            try:
-                g = do_grade(task, d)
-                log(out, f"  graded {name}/{arm}: quiz {g['quiz_correct']}/{g['quiz_total']} "
-                         f"halluc {g['hallucinated']} violations {len(g['violations'])} "
-                         f"compactions {g['compactions']}")
-            except Exception as e:  # noqa: BLE001
-                log(out, f"  GRADE FAILED {name}/{arm}: {e!r}")
+    names = []
+    for prefix in a.tasks.split(","):
+        for n in ALL_TASKS:
+            if n.startswith(prefix) and n not in names:
+                names.append(n)
+    tasks = [importlib.import_module(n) for n in names]
+    work = [(task, arm) for task in tasks for arm in a.arms.split(",")]
+    with ThreadPoolExecutor(max_workers=max(1, a.jobs)) as ex:
+        futs = [ex.submit(_one, task, arm, out, a) for task, arm in work]
+        for f in as_completed(futs):
+            f.result()
 
 
 if __name__ == "__main__":

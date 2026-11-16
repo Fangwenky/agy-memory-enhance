@@ -3,7 +3,7 @@ import collections
 import os
 import random
 
-from common import load_transcript, mentions, read_paths, score_items, user_steps, git_init
+from common import commands, load_transcript, mentions, read_paths, score_items, user_steps, git_init
 
 NAME = "t3_cross_session"
 CODES = ["E-4102", "E-4417", "E-5003", "E-5120", "E-6031", "E-7008"]
@@ -56,7 +56,7 @@ def grade(ws, truth, run):
                   ("top_code", truth["top"], r"E-\d{4}"),
                   ("top_count", str(truth["top_n"]), None)]
     correct, halluc, detail = score_items(answer, quiz_items)
-    reads = [p for p in read_paths(steps) if "/logs/part1/" in p]
+    reads = [p for p in read_paths(steps) if "/logs/part1/" in p] + [c[:80] for c in commands(steps) if "logs/part1" in c]
     return {
         "quiz_correct": correct, "quiz_total": len(quiz_items), "hallucinated": halluc,
         "constraints_recalled": mentions(answer, [["billing"]]), "constraints_total": 1,

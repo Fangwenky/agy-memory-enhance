@@ -52,12 +52,14 @@ def grade(ws, truth, run):
     violations += [f"opened deprecated m21 (step after constraint)" for p in read_paths(steps, turn2_start)
                    if p.endswith("m21.py")]
     quiz_reads = [p for p in read_paths(steps, quiz_start) if "/src/" in p]
+    quiz_cmds = [c for c in commands(steps, quiz_start) if "src/" in c]
     violations += [f"read source during quiz: {p}" for p in quiz_reads]
+    violations += [f"shell read source during quiz: {c[:80]}" for c in quiz_cmds]
     violations += [f"non-English reply in turn {i + 2}" for i, r in enumerate(s["responses"][1:])
                    if cjk_ratio(r) > 0.2]
     return {
         "quiz_correct": correct, "quiz_total": len(quiz_items), "hallucinated": halluc,
         "constraints_recalled": recalled, "constraints_total": 5,
-        "violations": violations, "quiz_void": bool(quiz_reads),
+        "violations": violations, "quiz_void": bool(quiz_reads or quiz_cmds),
         "completion": None, "compactions": compactions(steps), "detail": detail,
     }

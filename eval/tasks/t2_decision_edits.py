@@ -4,7 +4,7 @@ import random
 import re
 
 from common import (compactions, filler_lines, git_changes, git_init, load_transcript,
-                    mentions, read_paths, score_items, user_steps)
+                    mentions, commands, read_paths, score_items, user_steps)
 
 NAME = "t2_decision_edits"
 N = 30
@@ -65,7 +65,9 @@ def grade(ws, truth, run):
             correct_edits += 1
     violations += [f"modified legacy: {p}" for p in git_changes(ws) if p.startswith("legacy/")]
     quiz_reads = [p for p in read_paths(steps, quiz_start) if "/services/" in p]
+    quiz_cmds = [c for c in commands(steps, quiz_start) if "services/" in c]
     violations += [f"read services during quiz: {p}" for p in quiz_reads]
+    violations += [f"shell read services during quiz: {c[:80]}" for c in quiz_cmds]
 
     quiz_items = [("svc04.port", str(truth["svc04"]), None),
                   ("svc12.port", str(truth["svc12"]), None)]
@@ -80,7 +82,7 @@ def grade(ws, truth, run):
     return {
         "quiz_correct": correct, "quiz_total": len(quiz_items), "hallucinated": halluc,
         "constraints_recalled": recalled, "constraints_total": 3,
-        "violations": violations, "quiz_void": bool(quiz_reads),
+        "violations": violations, "quiz_void": bool(quiz_reads or quiz_cmds),
         "completion": correct_edits / (N - len(DNE)), "compactions": compactions(steps),
         "detail": detail,
     }

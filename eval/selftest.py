@@ -66,8 +66,8 @@ def main():
     # T4
     ws = tempfile.mkdtemp()
     tr = t4.setup(ws)
-    good = (f"no src/ edits, no grep, never open m77 and m112. m05={tr['m05']['key']} "
-            f"m41={tr['m41']['key']} m88={tr['m88']['key']}")
+    good = (f"no src/ edits, no grep, never open m45 and m68. m05={tr['m05']['key']} "
+            f"m33={tr['m33']['key']} m52={tr['m52']['key']}")
     ok &= check("t4 perfect", t4.grade(ws, tr, run_of(["a"] * 4 + [good])), 5, 0, 0)
 
     # T5

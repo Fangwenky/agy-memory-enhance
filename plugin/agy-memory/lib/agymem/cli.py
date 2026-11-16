@@ -55,9 +55,10 @@ class Ctx:
 
     def transcript_for(self, conv):
         st = self.store.conv_state(conv)
-        cands = [st.get("transcriptPath"),
-                 os.path.expanduser(f"~/.gemini/antigravity/brain/{conv}/.system_generated/logs/"
-                                    "transcript_full.jsonl")]
+        cands = [st.get("transcriptPath")] + [
+            os.path.expanduser(f"~/.gemini/{prod}/brain/{conv}/.system_generated/logs/transcript_full.jsonl")
+            for prod in ("antigravity", "antigravity-cli", "antigravity-ide")
+        ]
         return next((p for p in cands if p and os.path.exists(p)), None)
 
 
