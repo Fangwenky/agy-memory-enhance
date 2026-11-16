@@ -49,7 +49,7 @@ class HookE2ETest(unittest.TestCase):
                                    checkpoint(5, 501000), model(6, 30000)])
         t = self.texts(run_hook("pre_invocation", self.payload("PreInvocation")))
         self.assertEqual(len(t), 1)
-        self.assertIn("compaction detected (signal: checkpoint)", t[0])
+        self.assertIn("compaction #1 in this session detected (signal: checkpoint)", t[0])
         self.assertIn("不要修改 src/", t[0])
         comp = [e for e in self.events() if e["kind"] == "compaction"]
         self.assertEqual(len(comp), 1)

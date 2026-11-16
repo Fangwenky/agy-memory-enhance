@@ -78,10 +78,13 @@ def intro_text(shim, brief):
     return head + ("\n\n" + brief if brief else "")
 
 
-def align_text(shim, signal, brief):
-    return (f"{TAG} Context compaction detected (signal: {signal}). Earlier conversation was replaced "
-            "by a summary and details may be lost or paraphrased. Before continuing, load the "
-            f"`agy-memory` skill and run its alignment procedure. Memory CLI: `{shim}`.\n\n"
+def align_text(shim, signal, brief, n=None):
+    nth = f" #{n} in this session" if n else ""
+    return (f"{TAG} Context compaction{nth} detected (signal: {signal}). Earlier conversation was "
+            "replaced by a summary and details may be lost or paraphrased. Note: agy compacts right "
+            "before a model call, so your most recent action already ran on the summary alone; "
+            "re-check it. Make your next tool calls alignment only: load the `agy-memory` skill "
+            f"and run its alignment procedure, then resume the task. Memory CLI: `{shim}`.\n\n"
             + (brief or "(memory ledger is empty)"))
 
 
@@ -156,7 +159,8 @@ def pre_invocation(payload):
     elif state["pendingAlign"]:
         shim = ensure_shim(store)
         text = budgeted(state, cfg,
-                        align_text(shim, state["pendingAlign"], render_brief(store, cfg, conv)),
+                        align_text(shim, state["pendingAlign"], render_brief(store, cfg, conv),
+                                   state["compactions"]),
                         f"{TAG} Context compaction detected. Load the `agy-memory` skill and run "
                         f"alignment; brief: `{shim} brief`.")
         store.append("events.jsonl", store.event(conv, "align_nudge",

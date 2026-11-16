@@ -36,6 +36,8 @@ Run everything through the CLI. Its path is in the `[agy-memory]` system message
 
 The native summary paraphrases. Its resume rules say not to re-verify it. Your job is to catch what it dropped or bent, and to do so cheaply.
 
+**Timing.** agy compacts between the hook and the model call, so the alignment message arrives one model call late. Your last action after the summary ran without memory. Include it in the check. Run alignment before any further task tool calls, not in parallel with them.
+
 1. **Load memory.** Run `mem brief`. It is already included in the alignment message, so skip this step if you can see it.
 2. **Check constraints.** Compare each active constraint against the summary's "Commitments & Constraints" and your plan.
    - If a constraint is missing from the summary, it still applies.
