@@ -18,6 +18,15 @@ def fresh_state():
         "ledgerCtx": None,      # context size when ledger last changed (this epoch)
         "injectedTokens": 0,
         "model": None,
+        # bookkeeping for Stop / session index / mem
+        "transcriptPath": None,
+        "firstSeen": None,
+        "lastSeen": None,
+        "firstUserInput": None,
+        "files": [],
+        "editsSinceLedger": 0,
+        "archiveOffset": 0,
+        "stopNudged": False,
     }
 
 
@@ -33,7 +42,10 @@ def scan(state, steps, cfg, conv):
     for s in steps:
         idx = s.get("step_index")
         if T.is_user_input(s):
-            events.append(("user_input", idx, {"text": T.user_text(s)}))
+            text = T.user_text(s)
+            if not state.get("firstUserInput"):
+                state["firstUserInput"] = text[:300]
+            events.append(("user_input", idx, {"text": text}))
         elif T.is_checkpoint(s):
             events.append(("compaction", idx, {
                 "signal": "checkpoint", "peak": state["peak"],
@@ -67,6 +79,7 @@ def observe_ledger(state, ledger_size):
     if ledger_size != state["ledgerSize"]:
         state["ledgerSize"] = ledger_size
         state["ledgerCtx"] = state["lastCtx"]
+        state["editsSinceLedger"] = 0
 
 
 def should_nudge(state, cfg, model_peak):

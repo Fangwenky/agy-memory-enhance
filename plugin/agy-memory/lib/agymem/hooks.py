@@ -1,6 +1,7 @@
 """Hook handlers. Each takes the stdin payload and returns the stdout object."""
 import json
 import os
+import subprocess
 import sys
 import time
 import traceback
@@ -8,6 +9,7 @@ import traceback
 from . import brief as B
 from . import config as C
 from . import detect as D
+from .sessions import archive_increment, write_index
 from .store import Store, resolve_root
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -124,6 +126,10 @@ def pre_invocation(payload):
     set_current(store, conv, payload)
     model = payload.get("modelName") or state.get("model")
     first = not state["initialized"]
+    now = time.time()
+    state["firstSeen"] = state.get("firstSeen") or now
+    state["lastSeen"] = now
+    state["transcriptPath"] = payload.get("transcriptPath") or state.get("transcriptPath")
 
     from . import transcript as T
     steps, state["offset"], reset = T.read_new(payload.get("transcriptPath"), state["offset"])
@@ -182,6 +188,11 @@ def post_tool_use(payload):
     err = payload.get("error") or None
     if name in cfg["editToolNames"]:
         path = next((args[k] for k in _PATH_KEYS if isinstance(args.get(k), str)), None)
+        state = {**D.fresh_state(), **store.conv_state(conv)}
+        state["editsSinceLedger"] += 1
+        if path and path not in state["files"] and len(state["files"]) < 500:
+            state["files"].append(path)
+        store.save_conv_state(conv, state)
         store.append("events.jsonl", store.event(conv, "file_edit",
                                                  {"path": path, "tool": name, "error": err},
                                                  payload.get("stepIdx")))
@@ -192,8 +203,50 @@ def post_tool_use(payload):
     return {}
 
 
+def _git_changed(ws):
+    if not ws or not os.path.isdir(os.path.join(ws, ".git")):
+        return None
+    try:
+        p = subprocess.run(["git", "-C", ws, "status", "--porcelain"], capture_output=True,
+                           text=True, timeout=2)
+        return [ln[3:] for ln in p.stdout.splitlines() if len(ln) > 3][:200]
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def stop(payload):
+    store, cfg = open_store(payload)
+    conv = payload.get("conversationId") or "unknown"
+    state = {**D.fresh_state(), **store.conv_state(conv)}
+    D.observe_ledger(state, store.size("ledger.jsonl"))
+    ws = next(iter(payload.get("workspacePaths") or []), None)
+    store.append("events.jsonl", store.event(conv, "turn_end", {
+        "reason": payload.get("terminationReason"), "gitChanged": _git_changed(ws)}))
+    if cfg["archiveTranscripts"]:
+        archive_increment(store, conv, state,
+                          payload.get("transcriptPath") or state.get("transcriptPath"))
+    write_index(store, conv, state)
+
+    out = {}
+    if payload.get("continuationActive") is False:
+        state["stopNudged"] = False
+    if (cfg["stopNudge"] and payload.get("terminationReason") == "NO_TOOL_CALL"
+            and not payload.get("continuationActive") and not state["stopNudged"]
+            and state["editsSinceLedger"] >= cfg["stopNudgeEdits"]):
+        state["stopNudged"] = True
+        store.append("events.jsonl", store.event(conv, "stop_nudge",
+                                                 {"edits": state["editsSinceLedger"]}))
+        out = {"decision": "continue", "reason": (
+            f"{TAG} {state['editsSinceLedger']} file edits since the memory ledger was last updated. "
+            f"Briefly record new decisions / progress with `{shim_path(store)} add ...` "
+            "(skip if nothing is worth keeping), then finish.")}
+    store.save_conv_state(conv, state)
+    return out
+
+
 # ---------------------------------------------------------------- entrypoint
 HANDLERS = {
+    "Stop": stop,
     "SessionStart": session_start,
     "PreInvocation": pre_invocation,
     "PostToolUse": post_tool_use,
