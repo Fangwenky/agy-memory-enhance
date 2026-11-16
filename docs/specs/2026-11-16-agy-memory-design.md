@@ -40,13 +40,15 @@ agy-memory 是一个面向社区的开源 plugin：**在任务运行时持续、
 | 每个 hook 的 stdin 都带 `conversationId`、`transcriptPath`、`workspacePaths`、`lastUserInput` | 采集可直接读 transcript，零遗漏，无需 agent 配合 |
 | transcript 中每个 `PLANNER_RESPONSE` 步骤带 `input_tokens` / `cache_read_tokens`（在 Antigravity 2.0 的 `brain/<convId>/.system_generated/logs/transcript.jsonl` 中实测可见；文档未承诺，属内部格式） | 可据此估算上下文水位、检测压缩（token 骤降）。压缩时 transcript 是否只追加、hook 给出的 `transcriptPath` 是否同一格式、CLI/IDE 是否一致，均由 M0 确认 |
 | `Stop` 每轮结束都会触发，**没有"会话结束"事件** | Stop 里只做增量、廉价的工作 |
-| `SessionStart` 文档只说"新会话开始时"，恢复旧会话是否触发未知 | PreInvocation 需兜底：发现该会话无 state 文件时视为首次，补注入简报 |
+| `SessionStart` **恢复旧会话时不触发**（M0 实测） | PreInvocation 必须兜底：发现该会话无 state 文件时视为首次，补注入简报 |
+| 压缩时 transcript 只追加，并写入一个 `SYSTEM/CHECKPOINT` 步骤，内容以 `# Resuming from a compaction` 开头；注入过的 systemMessage 不会进入压缩摘要（M0 实测） | 以 CHECKPOINT 为主信号检测压缩；压缩后必须重新注入简报 |
+| 压缩阈值与模型相关：Gemini 4 Hydrogen 约在 518k 时压缩（M0 实测），远高于社区报告的 140k–276k | 水位预警阈值按 `modelName` 学习，不写死 |
 | `PLUGIN_ROOT` 只在 hook 进程中可见，agent 的 `run_command` 看不到；hook 进程的工作目录是 plugin 目录 | `mem` 的绝对路径必须由注入消息告诉 agent；存储路径一律取自 payload 的 `workspacePaths` / `cwd` |
 | 注入的 `systemMessage` 会持久留在会话中 | 注入内容本身会占用上下文，必须控制总量 |
 | hook 同步执行、阻塞 agent 循环，默认超时 30s | hook 内不调 LLM、不做重计算，只做追加写和轻量判断 |
 | `PreInvocation` / `SessionStart` 可注入持久化 `systemMessage` | 对齐信号与简报的注入通道 |
 | `Stop` 可返回 `decision: continue` 让 agent 继续 | 可用于"收尾时更新记忆"，但需节制（见反目标） |
-| plugin 的 hook 获得 `PLUGIN_ROOT` / `PLUGIN_DATA` 环境变量；`hooks.json` 必须位于 plugin 根目录 | 打包结构固定 |
+| plugin 的 hook 获得 `PLUGIN_ROOT`；`PLUGIN_DATA` 只有已安装的 plugin 才有，workspace 内的 plugin 为 null（M0 实测）；`hooks.json` 必须位于 plugin 根目录 | 打包结构固定；退回路径不能依赖 `PLUGIN_DATA` |
 | always-on rules 共享 20k token 预算，单文件 ≤ 24KB | 常驻 rule 必须极短，详细规程放 skill |
 
 ## 4. 方案选择
@@ -101,7 +103,7 @@ flowchart LR
 
 ## 6. 存储设计
 
-位置：`<workspace>/.agy-memory/`（多工作区时取 `workspacePaths[0]`；无工作区时退回 `$PLUGIN_DATA/projects/<cwd 的哈希>/`）。首次创建时在目录内写入 `.agy-memory/.gitignore`（内容为 `*`），**不修改用户自己的 `.gitignore`**；想提交记忆的用户删掉这个文件即可。`redactPatterns` 作用于所有写入内容（事件、账本、归档）。
+位置：`<workspace>/.agy-memory/`（多工作区时取 `workspacePaths[0]`；无工作区时退回 `${PLUGIN_DATA:-~/.agy-memory}/projects/<cwd 的哈希>/`）。首次创建时在目录内写入 `.agy-memory/.gitignore`（内容为 `*`），**不修改用户自己的 `.gitignore`**；想提交记忆的用户删掉这个文件即可。`redactPatterns` 作用于所有写入内容（事件、账本、归档）。
 
 ```text
 .agy-memory/
@@ -189,12 +191,12 @@ matcher 为一组尽力识别的写文件类工具名加上 `run_command`。具�
 1. 增量读取 transcript 尾部：按 state 中记录的字节偏移读取，不全量扫描。如果文件比偏移还小，说明被改写过，从头重读并重置偏移。
 2. 发现新的用户输入时，记录 `user_input` 事件。
 3. **压缩检测**：满足任一条件即判定压缩已发生：
-   - (a) transcript 中出现压缩/检查点类步骤或标记，具体形态由 M0 确认；
-   - (b) 最新可见的**上下文大小**（`input_tokens + cache_read_tokens`；`input_tokens` 只计未命中缓存的部分，单看它会因缓存波动而误报，见 `spike/FINDINGS.md`）比"自上次压缩以来的峰值"低 ≥ `compactionDropRatio`（默认 40%），且该峰值 ≥ `minPeakTokens`（默认 60k）。**判定压缩后峰值清零**，这样第二次、第三次压缩也能检测到。
+   - (a) **主信号**：新增步骤中出现 `type == "CHECKPOINT"`。M0 实测可靠；
+   - (b) 后备信号（防止 agy 改格式）：最新可见的**上下文大小**（`input_tokens + cache_read_tokens`；`input_tokens` 只计未命中缓存的部分，单看它会因缓存波动而误报，见 `spike/FINDINGS.md`）比"自上次压缩以来的峰值"低 ≥ `compactionDropRatio`（默认 40%），且该峰值 ≥ `minPeakTokens`（默认 60k）。**判定压缩后峰值清零**，这样第二次、第三次压缩也能检测到。
 
-   判定后：记录 `compaction` 事件，并注入对齐信号，内容为"检测到上下文已被压缩。在继续之前，加载 agy-memory skill 并执行对齐流程。"，后附简报和 `mem` 路径。每次压缩只注入一次，由 state 去重。
+   判定后：记录 `compaction` 事件，**事件中附带 CHECKPOINT 摘要原文**（供长期追溯，以及和账本对照）；在 `state/models.json` 中记下该 `modelName` 的压缩峰值；并注入对齐信号，内容为"检测到上下文已被压缩。在继续之前，加载 agy-memory skill 并执行对齐流程。"，后附简报和 `mem` 路径。每次压缩只注入一次，由 state 去重。
 4. **水位预警**：同时满足两个条件时注入一行提示：
-   - 上下文大小 `≥ softLimitTokens`（默认 120k），且距上次预警又增长了 ≥ `nudgeStepTokens`（默认 30k；从上次预警时的水位起算，首次从软上限起算）；
+   - 上下文大小 `≥` 软上限。软上限 = `softLimitRatio`（默认 0.75）× 该模型最近一次观测到的压缩峰值；还没有观测数据时用 `defaultSoftLimitTokens`（默认 150k，偏保守）。且距上次预警又增长了 ≥ `nudgeStepTokens`（默认 30k；从上次预警时的水位起算，首次从软上限起算）；
    - 上次预警之后账本没有更新过。
 
    提示内容为"上下文接近压缩阈值，请先用 `mem` 把约束、决策、进度写入账本，再继续。"这一步就是"可控压缩"的替代：在压缩发生前主动存档。
@@ -274,13 +276,14 @@ sequenceDiagram
 
 ```json
 {
-  "softLimitTokens": 120000,
+  "softLimitRatio": 0.75,
+  "defaultSoftLimitTokens": 150000,
   "nudgeStepTokens": 30000,
   "compactionDropRatio": 0.4,
   "minPeakTokens": 60000,
   "briefMaxTokens": 1500,
   "sessionInjectBudgetTokens": 6000,
-  "editToolNames": ["<M0 确定>"],
+  "editToolNames": ["write_file", "edit_file"],
   "stopNudge": true,
   "stopNudgeEdits": 5,
   "archiveTranscripts": true,
@@ -314,7 +317,11 @@ agy-memory/
 - **单元测试**：用 fixture transcript 和 stdin payload 回放每个 hook，断言事件、注入内容、去重逻辑都正确。
 - **性能**：在 50MB 的 transcript 上测 PreInvocation 的增量读取，单次 < 300ms。
 - **效果评测**（项目价值所在）：
-  - **任务**：设计 5 个必然触发压缩的长任务，例如多模块重构、按长规格逐步实现。每个任务在早期埋入 3 条约束和 5 个精确标识符。
+  - **任务**：设计 5 个必然触发**至少 2 次**压缩的长任务，例如多模块重构、按长规格逐步实现。M0 的经验是：约束写在首条消息里、任务自带状态文件时，原生摘要就足够了。所以评测任务必须做到以下几点：
+    - 约束和决策**分散在中途的多轮对话里**下达；
+    - 精确标识符来自工具输出，而不是用户原话；
+    - 任务不要求把状态写进文件；
+    - 至少一个任务跨两个会话。
   - **对照**：分别在"有 plugin"和"无 plugin"两种条件下运行，每个任务每种条件各跑 3 次，共 30 次。模型和设置固定。
   - **主要指标**：约束违反次数、标识符幻觉次数。
   - **次要指标**：重复读取或重复劳动的步骤数、任务完成率、账本写入率、额外 token 开销。
