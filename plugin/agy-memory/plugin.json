@@ -2,5 +2,7 @@
   "name": "agy-memory",
   "version": "0.1.0",
   "description": "Compaction-aware persistent memory for Antigravity: captures context continuously, detects context compaction, and re-aligns the agent from an append-only ledger and transcript archive.",
+  "author": "Fangwenky",
+  "repository": "https://github.com/Fangwenky/agy-memory-enhance",
   "logo": "assets/logo.svg"
 }

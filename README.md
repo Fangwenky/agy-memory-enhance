@@ -92,7 +92,7 @@ Highlights:
 ### Option 1: Global Install via `agy plugin` (Recommended / 推荐全局安装)
 
 ```sh
-git clone https://github.com/REPLACE_ME/agy-memory-enhance.git
+git clone https://github.com/Fangwenky/agy-memory-enhance.git
 cd agy-memory-enhance
 agy plugin validate ./plugin/agy-memory --strict
 agy plugin install ./plugin/agy-memory
