@@ -1,0 +1,24 @@
+{
+  "agy-probe": {
+    "SessionStart": [
+      { "type": "command", "command": "python3 ./probe.py SessionStart", "timeout": 5 }
+    ],
+    "PreInvocation": [
+      { "type": "command", "command": "python3 ./probe.py PreInvocation", "timeout": 5 }
+    ],
+    "PostInvocation": [
+      { "type": "command", "command": "python3 ./probe.py PostInvocation", "timeout": 5 }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "python3 ./probe.py PostToolUse", "timeout": 5 }
+        ]
+      }
+    ],
+    "Stop": [
+      { "type": "command", "command": "python3 ./probe.py Stop", "timeout": 5 }
+    ]
+  }
+}
